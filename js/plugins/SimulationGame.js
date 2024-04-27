@@ -64,7 +64,7 @@
 * @param description
 * @text Building Description
 * @desc The description of the building.
-* @default "This displays the default description of the building. Contact the author if this appears in the game."
+* @default "This displays the default description of the building.\nContact the author if this appears in the game."
 * @type note
 *
 * @param imageName
@@ -149,6 +149,8 @@ catch (err) {
         this.map = [];
         //the list consisting of all unlocked buildings, initially empty
         this.unlocks = [];
+        //what mode the game is currently in. 0 - normal; 1 - building
+        this.mode = 0;
     }
     SimGame.prototype.constructor = SimGame;
 
@@ -209,7 +211,72 @@ catch (err) {
 
     SimGame.prototype.enterBuildingMode = function(mapId){
         //enter the building mode
+        this.detailAndChangeMode(mapId);
     };
+
+    SimGame.prototype.detailAndChangeMode = function(mapId){
+        //easier-to-implement building mode (no interface)
+        //save the original information for recovery
+        this.originalFileName = $gamePlayer.characterName();
+        this.originalFileOffset = $gamePlayer.characterIndex();
+        this.originalX = $gamePlayer.x;
+        this.originalY = $gamePlayer.y;
+        //set the character image to the selector
+        $gamePlayer.setImage("SimGameSpecial",0);
+        //change the walkable settings
+        this.changePriorityStatus(mapId,0);
+        //enter the building mode
+        this.mode = 1;
+        //do something in the middle
+        //when exiting the mode:
+        
+    };
+
+    SimGame.prototype.exitBuildingMode = function(mapId){
+        this.mode = 0;
+        $gamePlayer.locate(this.originalX,this.originalY);
+        this.changePriorityStatus(mapId,1);
+        $gamePlayer.setImage(this.originalFileName,this.originalFileOffset);
+    }
+
+    SimGame.prototype.changePriorityStatus = function(mapId,mode){
+        //used for building mode: every area should be walkable by the character (now the selector)
+        if(mode === 0){
+            //mode = 0: set the status of all areas into "walkable"
+            var areas = this.map.filter((area) => {return area.mapId === mapId});
+            areas.forEach((value,index,array) => {
+                $gameMap.event(value.eventId).setPriorityType(0);
+            });
+        }
+        else{
+            //mode = 1: recover the original status
+            var areas = this.map.filter((area) => {return area.mapId === mapId});
+            areas.forEach((value,index,array) => {
+                if(value.buildingId === -1 || SimGamePlugin.Params.buildings[value.buildingId]["isWalkable"]){
+                    $gameMap.event(value.eventId).setPriorityType(0);
+                }
+                else{
+                    $gameMap.event(value.eventId).setPriorityType(1);
+                }
+            });
+        }
+    };
+
+    SimGame.prototype.constructBuilding = function(mapId,eventId,buildingId){
+        //construct a building on an empty construction area
+        var area = this.map.find(function(area){return area.mapId === mapId && area.eventId === eventId});
+        area.buildingId = buildingId;
+        this.displayBuilding(area);
+        //deal with "profits" here
+    };
+
+    SimGame.prototype.removeBuilding = function(mapId,eventId){
+        //remove an existing building
+        var area = this.map.find(function(area){return area.mapId === mapId && area.eventId === eventId});
+        area.buildingId = -1;
+        this.displayBuilding(area);
+        //deal with "profits" here
+    }
 
     SimGame.prototype.checkAndAcquireProfit = function(){
         //checks the current profits, and acquire them
@@ -223,6 +290,54 @@ catch (err) {
         //add the building with id buildingId to the unlocks list
         this.unlocks.push(buildingId);
     };
+
+    document.addEventListener("keydown",(event) => {
+        //listen for the keydown actions for enter and esc in building mode
+        if(SimGamePlugin.SimGame.mode === 1){
+            //trigger these only if in building mode
+            if(event.keyCode === 13){
+                //enter pressed
+                var eventId = $gameMap.eventIdXy($gamePlayer.x,$gamePlayer.y);
+                if(eventId !== 0){
+                    var area = SimGamePlugin.SimGame.map.find(function(area){return area.mapId === $gameMap.mapId() && area.eventId === eventId});
+                    if(SimGamePlugin.SimGame.tier >= area.minTier){
+                        if(area.buildingId === -1){
+                            $gameMessage.add("This area is empty.\nWhat would you like to do?");
+                            $gameMessage.setChoices(["Construct Buildings","Cancel"],0,1);
+                            $gameMessage.setChoiceCallback((n) => {
+                                if(n === 0){
+                                    //"construct buildings" selected
+                                    SimGamePlugin.SimGame.constructBuilding($gameMap.mapId(),eventId,0);
+                                }
+                            });
+                        }
+                        else{
+                            $gameMessage.add(SimGamePlugin.Params.buildings[area.buildingId]["name"]);
+                            $gameMessage.add(JSON.parse(SimGamePlugin.Params.buildings[area.buildingId]["description"]));
+                            $gameMessage.add("Profits per hour: " + SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+                            $gameMessage.add("What would you like to do?");
+                            $gameMessage.setChoices(["Remove Building","Cancel"],0,1);
+                            $gameMessage.setChoiceCallback((n) => {
+                                if(n === 0){
+                                    //"remove building" selected
+                                    SimGamePlugin.SimGame.removeBuilding($gameMap.mapId(),eventId);
+                                }
+                            });
+                        }
+                    }
+                    else{
+                        $gameMessage.add("This area is currently locked. It will be unlocked in\ntier " + area.minTier);
+                    }
+                }
+            }
+            else if(event.keyCode === 27){
+                //esc pressed
+                $gameMessage.add("Exited from building mode.");
+                SimGamePlugin.SimGame.exitBuildingMode($gameMap.mapId());
+            }
+        }
+        
+    });
 
     //plugin commands
     var _Game_Interpreter_pluginCommand_SimGame = Game_Interpreter.prototype.pluginCommand;
