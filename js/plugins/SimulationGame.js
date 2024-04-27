@@ -22,6 +22,19 @@
 * @type variable
 * @default 20
 *
+* @param emptyImageName
+* @text File Name of Empty Construction Area Image
+* @desc File name of the image of the empty construction area. The image should be put into img/characters/ folder.
+* @default !SimGame1
+*
+* @param emptyImageOffset
+* @text Offset of the Empty Construction Area Image
+* @desc The offset of the image of the empty construction area in the file. Same with the character images, start from top-left 0, end with bottom-right 7.
+* @type number
+* @default 0
+* @max 7
+* @min 0
+*
 * @param buildings
 * @text Building List
 * @type struct<Building>[]
@@ -54,12 +67,18 @@
 * @default "This displays the default description of the building. Contact the author if this appears in the game."
 * @type note
 *
-* @param image
-* @text Building Image
-* @desc The image of this building that appears in the game if the building is constructed. Recommend size: 48x48 pixels.
-* @type file
-* @default img/pictures/
-* @require 1
+* @param imageName
+* @text File Name of the Building Image
+* @desc File name of the image of the building that appears in the game. The image should be put into img/characters/ folder.
+* @default !SimGame1
+*
+* @param imageOffset
+* @text Offset of the Building Image
+* @desc The offset of the image in the file. Same with the character images, start from top-left 0, end with bottom-right 7.
+* @type number
+* @default 1
+* @max 7
+* @min 0
 *
 * @param cost
 * @text Building Cost
@@ -99,3 +118,176 @@
 * @desc Create a common event and select it here if you want to trigger some event when game characters are interacting with this building.
 * @type common_event
 */
+
+//Global variable (namespace) of the plugin
+var SimGamePlugin = SimGamePlugin || {};
+SimGamePlugin.Parameters = PluginManager.parameters('SimulationGame');
+SimGamePlugin.Params = SimGamePlugin.Params || {};
+
+//Retrieve parameters
+SimGamePlugin.Params.maxTier = Number(SimGamePlugin.Parameters['maxTier']);
+SimGamePlugin.Params.tierVariable = Number(SimGamePlugin.Parameters['tierVariable']);
+SimGamePlugin.Params.emptyImageName = String(SimGamePlugin.Parameters['emptyImageName']);
+SimGamePlugin.Params.emptyImageOffset = Number(SimGamePlugin.Parameters['emptyImageOffset']);
+try {
+    SimGamePlugin.Params.buildings = JSON.parse(SimGamePlugin.Parameters['buildings']).map(function(building){
+        return JSON.parse(building);
+    });
+}
+catch (err) {
+    console.error(err);
+    //do nothing
+}
+
+//Main function of the plugin
+(function(){
+    //class SimGame: the main class of this plugin
+    function SimGame(){
+        //initial tier is set to 1
+        this.tier = 1;
+        //the list consisting of all constructed buildings, initially empty
+        this.map = [];
+        //the list consisting of all unlocked buildings, initially empty
+        this.unlocks = [];
+    }
+    SimGame.prototype.constructor = SimGame;
+
+    SimGame.prototype.debug = function(mapId,eventId){
+        //this is the debug function; it would change from time to time
+        $gameMessage.add("map Id: " + mapId + "; event ID: " + eventId);
+        //var exampleList = [];
+        //exampleList.push({mapId: mapId, eventId: eventId});
+        //var checkExist = exampleList.find((area) => {return area.mapId === mapId && area.eventId === eventId});
+        //$gameMessage.add(checkExist.mapId);
+        $gameMessage.add("tier: " + SimGamePlugin.SimGame.tier);
+        //set image to the buildings
+        $gameMap.event(eventId).setImage(SimGamePlugin.Params.buildings[0]["imageName"],Number(SimGamePlugin.Params.buildings[0]["imageOffset"]));
+    };
+
+    SimGame.prototype.addConstructArea = function(minTier,mapId,eventId){
+        //add a new event to the construction area
+        var areaExist = this.map.find(function(area){return area.mapId === mapId && area.eventId === eventId});
+        if(areaExist){
+            //the area exists
+            //modify the event appearance
+            this.displayBuilding(areaExist);
+        }
+        else{
+            this.map.push({
+                mapId: mapId,
+                eventId: eventId,
+                minTier: minTier,
+                buildingId: -1 //-1 stands for no building
+            });
+            //modify the event appearance
+            this.displayBuilding(this.map[this.map.length - 1]);
+        }
+    };
+
+    SimGame.prototype.displayBuilding = function(area){
+        //display the building in the map; "area" is a this.map object
+        if(SimGamePlugin.SimGame.tier >= area.minTier){
+            //only display something when the current tier is larger than the minTier of this area
+            if(area.buildingId === -1){
+                //show the empty image
+                $gameMap.event(area.eventId).setImage(SimGamePlugin.Params.emptyImageName,SimGamePlugin.Params.emptyImageOffset);
+                //an empty area is walkable
+                $gameMap.event(area.eventId).setPriorityType(0);
+            }
+            else{
+                //set the image as the image of the building
+                $gameMap.event(area.eventId).setImage(SimGamePlugin.Params.buildings[area.buildingId]["imageName"],Number(SimGamePlugin.Params.buildings[area.buildingId]["imageOffset"]));
+                if(SimGamePlugin.Params.buildings[area.buildingId]["isWalkable"]){
+                    $gameMap.event(area.eventId).setPriorityType(0);
+                }
+                else{
+                    $gameMap.event(area.eventId).setPriorityType(1);
+                }
+            }
+        }
+    };
+
+    SimGame.prototype.enterBuildingMode = function(mapId){
+        //enter the building mode
+    };
+
+    SimGame.prototype.checkAndAcquireProfit = function(){
+        //checks the current profits, and acquire them
+    };
+
+    SimGame.prototype.triggerBuildingShop = function(){
+        //invokes the building shop interface
+    };
+
+    SimGame.prototype.unlockBuilding = function(buildingId){
+        //add the building with id buildingId to the unlocks list
+        this.unlocks.push(buildingId);
+    };
+
+    //plugin commands
+    var _Game_Interpreter_pluginCommand_SimGame = Game_Interpreter.prototype.pluginCommand;
+    Game_Interpreter.prototype.pluginCommand = function(command, args) {
+        _Game_Interpreter_pluginCommand_SimGame.call(this, command, args);
+        if (command === 'SimulationGame') {
+            switch (args[0]) {
+                case 'setAsConstructArea':
+                    //setAsConstructArea minTier
+                    //SimGame.prototype.addConstructArea = function(minTier,mapId,eventId);
+                    SimGamePlugin.SimGame.addConstructArea(Number(args[1]),this._mapId,this._eventId);
+                    break;
+                case 'enterBuildingMode':
+                    //enterBuildingMode
+                    //SimGame.prototype.enterBuildingMode = function(mapId);
+                    SimGamePlugin.SimGame.enterBuildingMode(this._mapId);
+                    break;
+                case 'checkAndAcquireProfit':
+                    //checkAndAcquireProfit
+                    SimGamePlugin.SimGame.checkAndAcquireProfit();
+                    break;
+                case 'triggerBuildingShop':
+                    //triggerBuildingShop
+                    //SceneManager.push(Scene_QuestBook);
+                    SimGamePlugin.SimGame.triggerBuildingShop();
+                    break;
+                case 'unlockBuilding':
+                    //unlockBuilding buildingId
+                    //SimGame.prototype.unlockBuilding = function(buildingId);
+                    SimGamePlugin.SimGame.unlockBuilding(Number(args[1]));
+                    break;
+                case 'debug':
+                    //just for debugging purposes
+                    SimGamePlugin.SimGame.debug(this._mapId,this._eventId);
+                    break;
+            }
+        }
+    };
+
+    //Create the SimGame-related objects when creating game objects
+    var _DataManager_createGameObjects_SimGame = DataManager.createGameObjects;
+    DataManager.createGameObjects = function() {
+        _DataManager_createGameObjects_SimGame.call(this);
+        if (typeof $dataCommonEvents !== "undefined") {
+            SimGamePlugin.SimGame = new SimGame();
+            //link the tier variable
+            $gameVariables.setValue(SimGamePlugin.Params.tierVariable,SimGamePlugin.SimGame.tier);
+        }
+    };
+
+    //link the tier variable
+    var _Game_Interpreter_operateVariable_SimGame = Game_Interpreter.prototype.operateVariable;
+    Game_Interpreter.prototype.operateVariable = function(variableId, operationType, value){
+        _Game_Interpreter_operateVariable_SimGame.call(this,variableId, operationType, value);
+        if(variableId === SimGamePlugin.Params.tierVariable){
+            SimGamePlugin.SimGame.tier = $gameVariables.value(variableId);
+            //validation of the value of tier
+            if(SimGamePlugin.SimGame.tier > SimGamePlugin.Params.maxTier){
+                SimGamePlugin.SimGame.tier = SimGamePlugin.Params.maxTier;
+                $gameVariables.setValue(variableId,SimGamePlugin.Params.maxTier);
+            }
+            else if(SimGamePlugin.SimGame.tier <= 0){
+                SimGamePlugin.SimGame.tier = 1;
+                $gameVariables.setValue(variableId,1);
+            }
+        }
+    };
+})();
