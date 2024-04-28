@@ -149,21 +149,45 @@ catch (err) {
         this.map = [];
         //the list consisting of all unlocked buildings, initially empty
         this.unlocks = [];
+        //the list consisting of all unlocked finite buildings with their amount left, initially empty
+        this.numFinite = [];
         //what mode the game is currently in. 0 - normal; 1 - building
         this.mode = 0;
+        //whether the game is currently in another scene; avoid multiple triggering
+        this.inOtherScene = false;
     }
     SimGame.prototype.constructor = SimGame;
 
     SimGame.prototype.debug = function(mapId,eventId){
         //this is the debug function; it would change from time to time
-        $gameMessage.add("map Id: " + mapId + "; event ID: " + eventId);
-        //var exampleList = [];
-        //exampleList.push({mapId: mapId, eventId: eventId});
-        //var checkExist = exampleList.find((area) => {return area.mapId === mapId && area.eventId === eventId});
-        //$gameMessage.add(checkExist.mapId);
-        $gameMessage.add("tier: " + SimGamePlugin.SimGame.tier);
+        this.displayMsg("test");
+        this.displayChoice(["a","b"],(n) => {});
+        this.displayMsg("test2");
         //set image to the buildings
         $gameMap.event(eventId).setImage(SimGamePlugin.Params.buildings[0]["imageName"],Number(SimGamePlugin.Params.buildings[0]["imageOffset"]));
+        //SimGamePlugin.SimGame.unlockBuilding(0);
+        //SceneManager.push(Scene_BuildingSelection);
+        //var _selectionWindow = new Window_SimGameBuildingSelection();
+        //_selectionWindow.start();
+    };
+
+    SimGame.prototype.displayMsg = function(msg){
+        //a function that tries to display some msg as if in the events
+        if (!$gameMessage.isBusy()) {
+            $gameMessage.add(msg);
+            $gameMap._interpreter.setWaitMode('message');
+        }
+    };
+
+    SimGame.prototype.displayChoice = function(choices,callback){
+        //a function that tries to display choice as if in the events
+        if (!$gameMessage.isBusy()) {
+            $gameMessage.setChoices(choices, 0, 1);
+            $gameMessage.setChoiceBackground(0);
+            $gameMessage.setChoicePositionType(2);
+            $gameMessage.setChoiceCallback(callback);
+            $gameMap._interpreter.setWaitMode('message');
+        }
     };
 
     SimGame.prototype.addConstructArea = function(minTier,mapId,eventId){
@@ -199,11 +223,11 @@ catch (err) {
             else{
                 //set the image as the image of the building
                 $gameMap.event(area.eventId).setImage(SimGamePlugin.Params.buildings[area.buildingId]["imageName"],Number(SimGamePlugin.Params.buildings[area.buildingId]["imageOffset"]));
-                if(SimGamePlugin.Params.buildings[area.buildingId]["isWalkable"]){
-                    $gameMap.event(area.eventId).setPriorityType(0);
+                if(SimGamePlugin.Params.buildings[area.buildingId]["isWalkable"] === "false" && this.mode === 0){
+                    $gameMap.event(area.eventId).setPriorityType(1);
                 }
                 else{
-                    $gameMap.event(area.eventId).setPriorityType(1);
+                    $gameMap.event(area.eventId).setPriorityType(0);
                 }
             }
         }
@@ -252,7 +276,7 @@ catch (err) {
             //mode = 1: recover the original status
             var areas = this.map.filter((area) => {return area.mapId === mapId});
             areas.forEach((value,index,array) => {
-                if(value.buildingId === -1 || SimGamePlugin.Params.buildings[value.buildingId]["isWalkable"]){
+                if(value.buildingId === -1 || SimGamePlugin.Params.buildings[value.buildingId]["isWalkable"] === "true"){
                     $gameMap.event(value.eventId).setPriorityType(0);
                 }
                 else{
@@ -288,15 +312,41 @@ catch (err) {
 
     SimGame.prototype.unlockBuilding = function(buildingId){
         //add the building with id buildingId to the unlocks list
-        this.unlocks.push(buildingId);
+        if(!this.unlocks.includes(buildingId)){
+            this.unlocks.push(buildingId);
+            if(SimGamePlugin.Params.buildings[buildingId]["isInfinite"] === "false"){
+                this.numFinite.push({
+                    buildingId: buildingId,
+                    amount: 0   //initially 0 
+                });
+            }
+        }
     };
+
+    SimGame.prototype.getFiniteBuilding = function(buildingId, increasement){
+        //increase the storage amount of finite buildings
+        if(this.unlocks.includes(buildingId) && SimGamePlugin.Params.buildings[buildingId]["isInfinite"] === "false"){
+            var amountCount = this.numFinite.find((value) => value.buildingId === buildingId);
+            amountCount.amount += increasement;
+        }
+    }
+
+    SimGame.prototype.consumeFiniteBuilding = function(buildingId, decreasement){
+        //decrease the storage amount of finite buildings
+        if(this.unlocks.includes(buildingId) && SimGamePlugin.Params.buildings[buildingId]["isInfinite"] === "false"){
+            var amountCount = this.numFinite.find((value) => value.buildingId === buildingId);
+            amountCount.amount -= decreasement;
+            if(amountCount.amount < 0)  amountCount.amount = 0;
+        }
+    }
 
     document.addEventListener("keydown",(event) => {
         //listen for the keydown actions for enter and esc in building mode
-        if(SimGamePlugin.SimGame.mode === 1){
+        if(SimGamePlugin.SimGame.mode === 1 && !$gameMessage.isBusy() && !SimGamePlugin.SimGame.inOtherScene){
             //trigger these only if in building mode
             if(event.keyCode === 13){
                 //enter pressed
+                //console.log("press of enter is triggered");
                 var eventId = $gameMap.eventIdXy($gamePlayer.x,$gamePlayer.y);
                 if(eventId !== 0){
                     var area = SimGamePlugin.SimGame.map.find(function(area){return area.mapId === $gameMap.mapId() && area.eventId === eventId});
@@ -307,7 +357,9 @@ catch (err) {
                             $gameMessage.setChoiceCallback((n) => {
                                 if(n === 0){
                                     //"construct buildings" selected
-                                    SimGamePlugin.SimGame.constructBuilding($gameMap.mapId(),eventId,0);
+                                    //SimGamePlugin.SimGame.constructBuilding($gameMap.mapId(),eventId,0);
+                                    SimGamePlugin.SimGame.inOtherScene = true;
+                                    SceneManager.push(Scene_BuildingSelection);
                                 }
                             });
                         }
@@ -320,6 +372,10 @@ catch (err) {
                             $gameMessage.setChoiceCallback((n) => {
                                 if(n === 0){
                                     //"remove building" selected
+                                    //return the building if it is finite
+                                    if(SimGamePlugin.Params.buildings[area.buildingId]["isInfinite"] === "false"){
+                                        SimGamePlugin.SimGame.getFiniteBuilding(area.buildingId,1);
+                                    }
                                     SimGamePlugin.SimGame.removeBuilding($gameMap.mapId(),eventId);
                                 }
                             });
@@ -332,8 +388,14 @@ catch (err) {
             }
             else if(event.keyCode === 27){
                 //esc pressed
-                $gameMessage.add("Exited from building mode.");
-                SimGamePlugin.SimGame.exitBuildingMode($gameMap.mapId());
+                $gameMessage.add("Do you want to exit the building mode?");
+                $gameMessage.setChoices(["Yes","No"],0,1);
+                $gameMessage.setChoiceCallback((n) => {
+                    if(n === 0){
+                        //"yes" selected
+                        SimGamePlugin.SimGame.exitBuildingMode($gameMap.mapId());
+                    }
+                });
             }
         }
         
@@ -367,7 +429,13 @@ catch (err) {
                 case 'unlockBuilding':
                     //unlockBuilding buildingId
                     //SimGame.prototype.unlockBuilding = function(buildingId);
-                    SimGamePlugin.SimGame.unlockBuilding(Number(args[1]));
+                    //-1 because the buildingId starts from 0
+                    SimGamePlugin.SimGame.unlockBuilding(Number(args[1]) - 1);
+                    break;
+                case 'addFiniteBuilding':
+                    //addFiniteBuilding buildingId amount
+                    //-1 because the buildingId starts from 0
+                    SimGamePlugin.SimGame.getFiniteBuilding(Number(args[1]) - 1,Number(args[2]));
                     break;
                 case 'debug':
                     //just for debugging purposes
@@ -405,4 +473,268 @@ catch (err) {
             }
         }
     };
+
+    //The window for selecting a building from unlocked buildings.
+    //This modifies from RPG Maker's original "Window_ItemList" class.
+    //Item -> buildingId
+    function Window_SimGameBuildingList() {
+        this.initialize.apply(this, arguments);
+    }
+
+    Window_SimGameBuildingList.prototype = Object.create(Window_Selectable.prototype);
+    Window_SimGameBuildingList.prototype.constructor = Window_SimGameBuildingList;
+
+    Window_SimGameBuildingList.prototype.initialize = function(x, y, width, height) {
+        Window_Selectable.prototype.initialize.call(this, x, y, width, height);
+        this._data = [];
+    };
+
+    Window_SimGameBuildingList.prototype.maxCols = function() {
+        return 2;
+    };
+
+    Window_SimGameBuildingList.prototype.spacing = function() {
+        return 48;
+    };
+
+    Window_SimGameBuildingList.prototype.maxItems = function() {
+        return this._data ? this._data.length : 1;
+    };
+
+    Window_SimGameBuildingList.prototype.item = function() {
+        var index = this.index();
+        return this._data && index >= 0 ? this._data[index] : null;
+    };
+
+    Window_SimGameBuildingList.prototype.isCurrentItemEnabled = function() {
+        return this.isEnabled(this.item());
+    };
+
+    Window_SimGameBuildingList.prototype.includes = function(item) {
+        //if the current building is unlocked, return true
+        var canFind = SimGamePlugin.SimGame.unlocks.find((value) => {
+            return value === item;
+        });
+        if(canFind){
+            return true;
+        }
+        else{
+            return false;
+        }
+    };
+
+    Window_SimGameBuildingList.prototype.needsNumber = function() {
+        return true;
+    };
+
+    Window_SimGameBuildingList.prototype.isEnabled = function(id) {
+        //If the building is infinite or contain amount left, return true
+        if(SimGamePlugin.Params.buildings[id]["isInfinite"] === "false"){
+            var curBuilding = SimGamePlugin.SimGame.numFinite.find((value) => {
+                return value.buildingId === id;
+            })
+            if(curBuilding){
+                if(curBuilding.amount === 0)    return false;
+                else return true;
+            }
+            else{
+                return false;
+            }
+        }
+        else{
+            return true;
+        }
+    };
+
+    Window_SimGameBuildingList.prototype.makeItemList = function() {
+        //filter out all the unlocked buildings
+        this._data = SimGamePlugin.SimGame.unlocks;
+        /*if (this.includes(null)) {
+            this._data.push(null);
+        }*/
+    };
+
+    Window_SimGameBuildingList.prototype.drawItem = function(index) {
+        //buildingIds are stored in _data
+        var buildingId = this._data[index];
+        //console.log(this._data[100]);
+        if (buildingId !== undefined) {
+            var numberWidth = this.numberWidth();
+            var rect = this.itemRect(index);
+            rect.width -= this.textPadding();
+            this.changePaintOpacity(this.isEnabled(buildingId));
+            this.drawItemName(buildingId, rect.x, rect.y, rect.width - numberWidth);    //should change this
+            this.drawItemNumber(buildingId, rect.x, rect.y, rect.width);
+            this.changePaintOpacity(1);
+        }
+        //console.log(this._data);
+    };
+
+    Window_SimGameBuildingList.prototype.numberWidth = function() {
+        return this.textWidth('000');
+    };
+
+    Window_SimGameBuildingList.prototype.drawItemName = function(id, x, y, width) {
+        //override the drawItemName function of Window_Base
+        width = width || 312;
+        if (id !== undefined) {
+            var iconBoxWidth = Window_Base._iconWidth + 4;
+            this.resetTextColor();
+            //this.drawIcon(item.iconIndex, x + 2, y + 2);
+            //deal with this display later
+            //this.drawCharacter(SimGamePlugin.Params.buildings[id]["imageName"], SimGamePlugin.Params.buildings[id]["imageOffset"], x, y);
+            this.drawText(SimGamePlugin.Params.buildings[id]["name"], x + iconBoxWidth, y, width - iconBoxWidth);
+            //console.log(SimGamePlugin.Params.buildings[id]["name"]);
+        }
+    };
+
+    Window_SimGameBuildingList.prototype.drawItemNumber = function(id, x, y, width) {
+        //draw ∞ for infinite buildings, current number for current buildings
+        if (this.needsNumber()) {
+            this.drawText(':', x, y, width - this.textWidth('00'), 'right');
+            if(SimGamePlugin.Params.buildings[id]["isInfinite"] === "true"){
+                this.drawText("∞",x,y,width,"right");
+            }
+            else{
+                var curBuilding = SimGamePlugin.SimGame.numFinite.find((value) => {
+                    return value.buildingId === id;
+                })
+                if(curBuilding){
+                    this.drawText(curBuilding.amount,x,y,width,"right");
+                }
+                else{
+                    this.drawText("0",x,y,width,right);
+                }
+            }
+        }
+    };
+
+    Window_SimGameBuildingList.prototype.updateHelp = function() {
+        this.setHelpWindowItem(this.item());
+    };
+
+    Window_SimGameBuildingList.prototype.refresh = function() {
+        this.makeItemList();
+        this.createContents();
+        this.drawAllItems();
+    };
+
+    //The window that deals with the construct building selection.
+    function Window_SimGameBuildingSelection() {
+        this.initialize.apply(this, arguments);
+    }
+
+    Window_SimGameBuildingSelection.prototype = Object.create(Window_SimGameBuildingList.prototype);
+    Window_SimGameBuildingSelection.prototype.constructor = Window_SimGameBuildingSelection;
+
+    Window_SimGameBuildingSelection.prototype.initialize = function(/*messageWindow*/) {
+        //this._messageWindow = messageWindow;
+        var width = Graphics.boxWidth;
+        var height = this.windowHeight();
+        Window_SimGameBuildingList.prototype.initialize.call(this, 0, 0, width, height);
+        this.openness = 0;
+        this.deactivate();
+        //this.setHandler('ok',     this.onOk.bind(this));
+        //this.setHandler('cancel', this.onCancel.bind(this));
+    };
+
+    Window_SimGameBuildingSelection.prototype.windowHeight = function() {
+        return this.fittingHeight(this.numVisibleRows());
+    };
+
+    Window_SimGameBuildingSelection.prototype.numVisibleRows = function() {
+        return 4;
+    };
+
+    Window_SimGameBuildingSelection.prototype.start = function() {
+        this.refresh();
+        this.updatePlacement();
+        this.select(0);
+        this.open();
+        this.activate();
+    };
+
+    Window_SimGameBuildingSelection.prototype.updatePlacement = function() {
+        //if (this._messageWindow.y >= Graphics.boxHeight / 2) {
+            this.y = 0;
+        //} else {
+        //    this.y = Graphics.boxHeight - this.height;
+        //}
+    };
+
+    //This creates the scene of the building selection
+    function Scene_BuildingSelection() {
+        this.initialize.apply(this, arguments);
+    }
+
+    Scene_BuildingSelection.prototype = Object.create(Scene_MenuBase.prototype);
+    Scene_BuildingSelection.prototype.constructor = Scene_BuildingSelection;
+
+    Scene_BuildingSelection.prototype.initialize = function() {
+        Scene_MenuBase.prototype.initialize.call(this);
+    };
+
+    Scene_BuildingSelection.prototype.create = function() {
+        Scene_MenuBase.prototype.create.call(this);
+        this.createSelectionWindow();
+    };
+
+    Scene_BuildingSelection.prototype.createSelectionWindow = function() {
+        this._selectionWindow = new Window_SimGameBuildingSelection();
+        this._selectionWindow.setHandler('ok', this.onOk.bind(this));
+        this._selectionWindow.setHandler('cancel', this.onCancel.bind(this));
+        this.addWindow(this._selectionWindow);
+        this._selectionWindow.start();
+    };
+
+    Scene_BuildingSelection.prototype.onOk = function() {
+        //displays the information of the building; ask the player if he/she would like to construct it.
+        //this.close();
+        var id = this._selectionWindow.item();
+        $gameMessage.add(SimGamePlugin.Params.buildings[id]["name"]);
+        $gameMessage.add(JSON.parse(SimGamePlugin.Params.buildings[id]["description"]));
+        $gameMessage.add("Profits per hour: " + SimGamePlugin.Params.buildings[id]["profit"]);
+        $gameMessage.add("Building cost: " + SimGamePlugin.Params.buildings[id]["cost"] + ", you now have " + $gameParty.gold());
+        if($gameParty.gold() >= SimGamePlugin.Params.buildings[id]["cost"]){
+            //having enough money to build
+            $gameParty.loseGold(SimGamePlugin.Params.buildings[id]["cost"]);
+            if(SimGamePlugin.Params.buildings[id]["isInfinite"] === "false"){
+                //change the amount if the building is finite
+                SimGamePlugin.SimGame.consumeFiniteBuilding(id,1);
+            }
+            SimGamePlugin.SimGame.constructBuilding($gameMap.mapId(),$gameMap.eventIdXy($gamePlayer.x,$gamePlayer.y),id);
+            $gameMessage.add("Successfully constructed.");
+            //try add the choice if time permits...
+            /*$gameMessage.add("Would you like to construct it here?");
+            $gameMessage.setChoices(["Yes","No"],0,1);
+            console.log("after setchoice");
+            $gameMessage.setChoiceCallback((n) => {
+                if(n === 0){
+                    //"yes" selected
+                    $gameParty.loseGold(SimGamePlugin.Params.buildings[id]["cost"]);
+                    SimGamePlugin.SimGame.constructBuilding($gameMap.mapId(),$gameMap.eventIdXy($gamePlayer.x,$gamePlayer.y),id);
+                    //terminate the select window
+                    //this._messageWindow.terminateMessage();
+                    
+                }
+                
+            });*/
+            SimGamePlugin.SimGame.inOtherScene = false;
+            this.popScene();
+            
+        }
+        else{
+            //not enough money; nothing happens
+            $gameMessage.add("You don't have enough money to build it.");
+            SimGamePlugin.SimGame.inOtherScene = false;
+            this.popScene();
+        }
+    };
+
+    Scene_BuildingSelection.prototype.onCancel = function() {
+        //this._messageWindow.terminateMessage();
+        SimGamePlugin.SimGame.inOtherScene = false;
+        this.popScene();
+    };
 })();
+
