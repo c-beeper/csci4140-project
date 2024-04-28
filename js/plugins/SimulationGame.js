@@ -174,6 +174,7 @@ catch (err) {
         //var _selectionWindow = new Window_SimGameBuildingSelection();
         //_selectionWindow.start();
         var curDate = new Date();
+        curDate = curDate.getTime();
         $gameMessage.add("profit: " + this.calculateProfitsDebug(this.map[0].lastModified,curDate,100));
     };
 
@@ -187,6 +188,7 @@ catch (err) {
         }
         else{
             var curDate = new Date();
+            curDate = curDate.getTime();
             this.map.push({
                 mapId: mapId,
                 eventId: eventId,
@@ -246,11 +248,13 @@ catch (err) {
     };
 
     SimGame.prototype.exitBuildingMode = function(mapId){
-        this.mode = 0;
-        $gamePlayer.locate(this.originalX,this.originalY);
-        this.changePriorityStatus(mapId,1);
-        $gamePlayer.setImage(this.originalFileName,this.originalFileOffset);
-    }
+        if(this.mode === 1){
+            this.mode = 0;
+            $gamePlayer.locate(this.originalX,this.originalY);
+            this.changePriorityStatus(mapId,1);
+            $gamePlayer.setImage(this.originalFileName,this.originalFileOffset);
+        }
+    };
 
     SimGame.prototype.changePriorityStatus = function(mapId,mode){
         //used for building mode: every area should be walkable by the character (now the selector)
@@ -282,6 +286,7 @@ catch (err) {
         this.displayBuilding(area);
         //change the last modified time to the time of constructing the building
         var curDate = new Date();
+        curDate = curDate.getTime();
         area.lastModified = curDate;
     };
 
@@ -290,6 +295,7 @@ catch (err) {
         var area = this.map.find(function(area){return area.mapId === mapId && area.eventId === eventId});
         //calculate the profits
         var curDate = new Date();
+        curDate = curDate.getTime();
         //change this into normal after finished development
         var curProfit = this.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
         $gameParty.gainGold(curProfit);
@@ -298,11 +304,12 @@ catch (err) {
         area.lastModified = curDate;
         this.displayBuilding(area);
         //deal with "profits" here
-    }
+    };
 
     SimGame.prototype.checkAndAcquireProfit = function(){
         //checks the current profits, and acquire them
         var curDate = new Date();
+        curDate = curDate.getTime();
         var totProfitPerHour = 0;
         var totProfit = 0;
         this.map.forEach((area) => {
@@ -322,6 +329,7 @@ catch (err) {
                 //"yes" selected
                 //re-calculate the profits because players may stay at the message dialog for a long time
                 curDate = new Date();
+                curDate = curDate.getTime();
                 totProfit = 0;
                 this.map.forEach((area) => {
                     //iterate through all the areas to calculate the total profit
@@ -339,9 +347,10 @@ catch (err) {
 
     SimGame.prototype.calculateProfitsFromDate = function(date1,date2,profit){
         //calculate the profit between two dates
+        //date is passed after getTime()
         //calculate how many hours have passed between the two days (date2 - date1)
         //past time in seconds
-        var diff = (date2.getTime() - date1.getTime()) / 1000;
+        var diff = (date2 - date1) / 1000;
         //past time in hours
         diff /= (60 * 60);
         //times the profit
@@ -359,7 +368,7 @@ catch (err) {
     SimGame.prototype.calculateProfitsDebug = function(date1,date2,profit){
         //calculate the profit using per minute (don't need to wait to see the result)
         //past time in seconds
-        var diff = (date2.getTime() - date1.getTime()) / 1000;
+        var diff = (date2 - date1) / 1000;
         //past time in minutes
         diff /= 60;
         //times the profit
@@ -400,7 +409,7 @@ catch (err) {
             var amountCount = this.numFinite.find((value) => value.buildingId === buildingId);
             amountCount.amount += increasement;
         }
-    }
+    };
 
     SimGame.prototype.consumeFiniteBuilding = function(buildingId, decreasement){
         //decrease the storage amount of finite buildings
@@ -409,7 +418,7 @@ catch (err) {
             amountCount.amount -= decreasement;
             if(amountCount.amount < 0)  amountCount.amount = 0;
         }
-    }
+    };
 
     document.addEventListener("keydown",(event) => {
         //listen for the keydown actions for enter and esc in building mode
@@ -439,6 +448,7 @@ catch (err) {
                             $gameMessage.add(JSON.parse(SimGamePlugin.Params.buildings[area.buildingId]["description"]));
                             $gameMessage.add("Profits per hour: " + SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
                             var curDate = new Date();
+                            curDate = curDate.getTime();
                             //change this into normal after finished development
                             var curProfit = SimGamePlugin.SimGame.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
                             $gameMessage.add("Profits accumulated: " + curProfit + ", will be acquired upon remmoval.");
@@ -547,6 +557,27 @@ catch (err) {
                 $gameVariables.setValue(variableId,1);
             }
         }
+    };
+
+    //Save necessary information when the player saves the game
+    var _DataManager_makeSaveContents_SimGame = DataManager.makeSaveContents;
+    DataManager.makeSaveContents = function() {
+        var contents = _DataManager_makeSaveContents_SimGame.call(this);
+        contents.map_SimGame = SimGamePlugin.SimGame.map;
+        contents.unlocks_SimGame = SimGamePlugin.SimGame.unlocks;
+        contents.numFinite_SimGame = SimGamePlugin.SimGame.numFinite;
+        return contents;
+    };
+
+    //Reload the saved information upon loading savefiles
+    var _DataManager_extractSaveContents_SimGame = DataManager.extractSaveContents;
+    DataManager.extractSaveContents = function(contents) {
+        _DataManager_extractSaveContents_SimGame.call(this, contents);
+        SimGamePlugin.SimGame = new SimGame();
+        SimGamePlugin.SimGame.map = contents.map_SimGame;
+        SimGamePlugin.SimGame.unlocks = contents.unlocks_SimGame;
+        SimGamePlugin.SimGame.numFinite = contents.numFinite_SimGame;
+        SimGamePlugin.SimGame.tier = $gameVariables.value(SimGamePlugin.Params.tierVariable);
     };
 
     //The window for selecting a building from unlocked buildings.
