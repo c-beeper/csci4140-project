@@ -94,6 +94,13 @@
 * @default 1
 * @min 0
 *
+* @param shopCost
+* @text Unlock or Buying Cost
+* @desc The cost for buying this building from the building shop. Note that this is different from the construction cost.
+* @type number
+* @default 1000
+* @min 0
+*
 * @param isInfinite
 * @text Can Be Infinitely Constructed
 * @desc If this parameter is set to true, the building can be constructed infinitely if it is unlocked.
@@ -160,34 +167,14 @@ catch (err) {
 
     SimGame.prototype.debug = function(mapId,eventId){
         //this is the debug function; it would change from time to time
-        this.displayMsg("test");
-        this.displayChoice(["a","b"],(n) => {});
-        this.displayMsg("test2");
         //set image to the buildings
         $gameMap.event(eventId).setImage(SimGamePlugin.Params.buildings[0]["imageName"],Number(SimGamePlugin.Params.buildings[0]["imageOffset"]));
         //SimGamePlugin.SimGame.unlockBuilding(0);
         //SceneManager.push(Scene_BuildingSelection);
         //var _selectionWindow = new Window_SimGameBuildingSelection();
         //_selectionWindow.start();
-    };
-
-    SimGame.prototype.displayMsg = function(msg){
-        //a function that tries to display some msg as if in the events
-        if (!$gameMessage.isBusy()) {
-            $gameMessage.add(msg);
-            $gameMap._interpreter.setWaitMode('message');
-        }
-    };
-
-    SimGame.prototype.displayChoice = function(choices,callback){
-        //a function that tries to display choice as if in the events
-        if (!$gameMessage.isBusy()) {
-            $gameMessage.setChoices(choices, 0, 1);
-            $gameMessage.setChoiceBackground(0);
-            $gameMessage.setChoicePositionType(2);
-            $gameMessage.setChoiceCallback(callback);
-            $gameMap._interpreter.setWaitMode('message');
-        }
+        var curDate = new Date();
+        $gameMessage.add("profit: " + this.calculateProfitsDebug(this.map[0].lastModified,curDate,100));
     };
 
     SimGame.prototype.addConstructArea = function(minTier,mapId,eventId){
@@ -199,11 +186,13 @@ catch (err) {
             this.displayBuilding(areaExist);
         }
         else{
+            var curDate = new Date();
             this.map.push({
                 mapId: mapId,
                 eventId: eventId,
                 minTier: minTier,
-                buildingId: -1 //-1 stands for no building
+                buildingId: -1, //-1 stands for no building
+                lastModified: curDate
             });
             //modify the event appearance
             this.displayBuilding(this.map[this.map.length - 1]);
@@ -291,23 +280,105 @@ catch (err) {
         var area = this.map.find(function(area){return area.mapId === mapId && area.eventId === eventId});
         area.buildingId = buildingId;
         this.displayBuilding(area);
-        //deal with "profits" here
+        //change the last modified time to the time of constructing the building
+        var curDate = new Date();
+        area.lastModified = curDate;
     };
 
     SimGame.prototype.removeBuilding = function(mapId,eventId){
         //remove an existing building
         var area = this.map.find(function(area){return area.mapId === mapId && area.eventId === eventId});
+        //calculate the profits
+        var curDate = new Date();
+        //change this into normal after finished development
+        var curProfit = this.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+        $gameParty.gainGold(curProfit);
+        //$gameMessage.add("Profits earned: " + curProfit + ", you now have: " + $gameParty.gold());
         area.buildingId = -1;
+        area.lastModified = curDate;
         this.displayBuilding(area);
         //deal with "profits" here
     }
 
     SimGame.prototype.checkAndAcquireProfit = function(){
         //checks the current profits, and acquire them
+        var curDate = new Date();
+        var totProfitPerHour = 0;
+        var totProfit = 0;
+        this.map.forEach((area) => {
+            //iterate through all the areas to calculate the total profit
+            if(area.buildingId !== -1){
+                totProfitPerHour += Number(SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+                //remember to change this from debug to normal
+                totProfit += this.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+            }
+        });
+        $gameMessage.add("Current profit per hour: " + totProfitPerHour);
+        $gameMessage.add("Profits accumulated till now: " + totProfit);
+        $gameMessage.add("Would you like to collect them?");
+        $gameMessage.setChoices(["Yes","No"],0,1);
+        $gameMessage.setChoiceCallback((n) => {
+            if(n === 0){
+                //"yes" selected
+                //re-calculate the profits because players may stay at the message dialog for a long time
+                curDate = new Date();
+                totProfit = 0;
+                this.map.forEach((area) => {
+                    //iterate through all the areas to calculate the total profit
+                    if(area.buildingId !== -1){
+                        //remember to change this from debug to normal
+                        totProfit += this.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+                        //reset the last modified time
+                        area.lastModified = curDate;
+                    }
+                });
+                $gameParty.gainGold(totProfit);
+            }
+        });
+    };
+
+    SimGame.prototype.calculateProfitsFromDate = function(date1,date2,profit){
+        //calculate the profit between two dates
+        //calculate how many hours have passed between the two days (date2 - date1)
+        //past time in seconds
+        var diff = (date2.getTime() - date1.getTime()) / 1000;
+        //past time in hours
+        diff /= (60 * 60);
+        //times the profit
+        diff *= profit;
+        if(diff < 0){
+            //probably the player has changed the system time
+            return 0;
+        }
+        else{
+            //round to integers
+            return Math.round(diff);
+        }
+    };
+
+    SimGame.prototype.calculateProfitsDebug = function(date1,date2,profit){
+        //calculate the profit using per minute (don't need to wait to see the result)
+        //past time in seconds
+        var diff = (date2.getTime() - date1.getTime()) / 1000;
+        //past time in minutes
+        diff /= 60;
+        //times the profit
+        diff *= profit;
+        if(diff < 0){
+            //probably the player has changed the system time
+            return 0;
+        }
+        else{
+            //round to integers
+            return Math.round(diff);
+        }
     };
 
     SimGame.prototype.triggerBuildingShop = function(){
         //invokes the building shop interface
+        SceneManager.push(Scene_BuildingShop);
+        //change this
+        SceneManager.prepareNextScene();
     };
 
     SimGame.prototype.unlockBuilding = function(buildingId){
@@ -367,6 +438,10 @@ catch (err) {
                             $gameMessage.add(SimGamePlugin.Params.buildings[area.buildingId]["name"]);
                             $gameMessage.add(JSON.parse(SimGamePlugin.Params.buildings[area.buildingId]["description"]));
                             $gameMessage.add("Profits per hour: " + SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+                            var curDate = new Date();
+                            //change this into normal after finished development
+                            var curProfit = SimGamePlugin.SimGame.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+                            $gameMessage.add("Profits accumulated: " + curProfit + ", will be acquired upon remmoval.");
                             $gameMessage.add("What would you like to do?");
                             $gameMessage.setChoices(["Remove Building","Cancel"],0,1);
                             $gameMessage.setChoiceCallback((n) => {
@@ -736,5 +811,245 @@ catch (err) {
         SimGamePlugin.SimGame.inOtherScene = false;
         this.popScene();
     };
-})();
 
+    //Window of building buying, inheriting from Window_ShopBuy class
+    function Window_BuildingBuy(){
+        this.initialize.apply(this, arguments);
+    }
+
+    Window_BuildingBuy.prototype = Object.create(Window_ShopBuy.prototype);
+    Window_BuildingBuy.prototype.constructor = Window_BuildingBuy;
+
+    Window_BuildingBuy.prototype.initialize = function(x, y, height) {
+        Window_ShopBuy.prototype.initialize.call(this,x,y,height,[]);
+    }
+
+    Window_BuildingBuy.prototype.isEnabled = function(item) {
+        //the item is disabled only if no enough money
+        return (item && this.price(item) <= this._money);
+    };
+
+    Window_BuildingBuy.prototype.makeItemList = function() {
+        //_data: {buildingId,curAmount}
+        //_price: (shopCost of the buildingId)
+        //_shopGoods: just all the buildings
+        this._data = [];
+        this._price = [];
+        SimGamePlugin.Params.buildings.forEach((building,id) => {
+            //add to the data list if the building is:
+            //able to be shopped in this tier (tier >= minShopTier), and
+            //it is finite, or it is infinite and locked
+            if(SimGamePlugin.SimGame.tier >= building["minShopTier"]){
+                if(building["isInfinite"] === "false"){
+                    //finite
+                    var curAmount = SimGamePlugin.SimGame.numFinite.find((value) => value.buildingId === id);
+                    if(curAmount){
+                        this._data.push({
+                            buildingId: id,
+                            curAmount: curAmount.amount
+                        });
+                        this._price.push(Number(building["shopCost"]));
+                    }
+                    else{
+                        this._data.push({
+                            buildingId: id,
+                            curAmount: 0
+                        });
+                        this._price.push(Number(building["shopCost"]));
+                    }
+                }
+                else{
+                    //infinite
+                    if(!SimGamePlugin.SimGame.unlocks.includes(id)){
+                        //locked
+                        this._data.push({
+                            buildingId: id,
+                            curAmount: 0
+                        });
+                        this._price.push(Number(building["shopCost"]));
+                    }
+                }
+            }
+        });
+    };
+
+    Window_BuildingBuy.prototype.drawItemName = function(item, x, y, width) {
+        width = width || 312;
+        if (item !== undefined) {
+            var iconBoxWidth = Window_Base._iconWidth + 4;
+            this.resetTextColor();
+            this.drawText(SimGamePlugin.Params.buildings[item.buildingId]["name"], x + iconBoxWidth, y, width - iconBoxWidth);
+        }
+    };
+
+    //Number window of building shop; Window_ShopNumber
+    function Window_BuildingNumber() {
+        this.initialize.apply(this, arguments);
+    }
+    
+    Window_BuildingNumber.prototype = Object.create(Window_ShopNumber.prototype);
+    Window_BuildingNumber.prototype.constructor = Window_BuildingNumber;
+    
+    Window_BuildingNumber.prototype.initialize = function(x, y, height) {
+        Window_ShopNumber.prototype.initialize.call(this, x, y, height);
+    };
+
+    Window_BuildingNumber.prototype.drawItemName = function(item, x, y, width) {
+        width = width || 312;
+        if (item !== undefined) {
+            var iconBoxWidth = Window_Base._iconWidth + 4;
+            this.resetTextColor();
+            this.drawText(SimGamePlugin.Params.buildings[item.buildingId]["name"], x + iconBoxWidth, y, width - iconBoxWidth);
+        }
+    };
+
+    //Status window of building shop; Window_ShopStatus
+    function Window_BuildingStatus() {
+        this.initialize.apply(this, arguments);
+    }
+    
+    Window_BuildingStatus.prototype = Object.create(Window_ShopStatus.prototype);
+    Window_BuildingStatus.prototype.constructor = Window_BuildingStatus;
+    
+    Window_BuildingStatus.prototype.initialize = function(x, y, width, height) {
+        Window_ShopStatus.prototype.initialize.call(this, x, y, width, height);
+        //this._item = null;
+        //this._pageIndex = 0;
+        //this.refresh();
+    };
+
+    Window_BuildingStatus.prototype.isEquipItem = function() {
+        //it is not
+        return false;
+    };
+
+    Window_BuildingStatus.prototype.drawPossession = function(x, y) {
+        var width = this.contents.width - this.textPadding() - x;
+        var possessionWidth = this.textWidth('0000');
+        this.changeTextColor(this.systemColor());
+        this.drawText(TextManager.possession, x, y, width - possessionWidth);
+        this.resetTextColor();
+        this.drawText(this._item.curAmount, x, y, width, 'right');
+    };
+
+    //Help window of building ship; Window_Help
+    function Window_BuildingHelp() {
+        this.initialize.apply(this, arguments);
+    }
+    
+    Window_BuildingHelp.prototype = Object.create(Window_Help.prototype);
+    Window_BuildingHelp.prototype.constructor = Window_BuildingHelp;
+    
+    Window_BuildingHelp.prototype.initialize = function(numLines) {
+        Window_Help.prototype.initialize.call(this);
+        //this._text = '';
+    };
+
+    Window_BuildingHelp.prototype.setItem = function(item) {
+        this.setText(item ? JSON.parse(SimGamePlugin.Params.buildings[item.buildingId]["description"]) : '');
+    };
+
+    //This is the scene of the buildings shop
+    //It inherits from the Scene_Shop class
+    function Scene_BuildingShop() {
+        this.initialize.apply(this, arguments);
+    }
+    
+    Scene_BuildingShop.prototype = Object.create(Scene_Shop.prototype);
+    Scene_BuildingShop.prototype.constructor = Scene_BuildingShop;
+    
+    Scene_BuildingShop.prototype.initialize = function() {
+        Scene_Shop.prototype.initialize.call(this);
+    };
+    
+    Scene_BuildingShop.prototype.prepare = function() {
+        //probably add the goods here
+        this._purchaseOnly = true;
+        this._item = null;
+    };
+    
+    Scene_BuildingShop.prototype.create = function() {
+        Scene_Shop.prototype.create.call(this);
+    };
+
+    Scene_BuildingShop.prototype.createHelpWindow = function() {
+        this._helpWindow = new Window_BuildingHelp();
+        this.addWindow(this._helpWindow);
+    };
+    
+    Scene_BuildingShop.prototype.createNumberWindow = function() {
+        var wy = this._dummyWindow.y;
+        var wh = this._dummyWindow.height;
+        this._numberWindow = new Window_BuildingNumber(0, wy, wh);
+        this._numberWindow.hide();
+        this._numberWindow.setHandler('ok',     this.onNumberOk.bind(this));
+        this._numberWindow.setHandler('cancel', this.onNumberCancel.bind(this));
+        this.addWindow(this._numberWindow);
+    };
+    
+    Scene_BuildingShop.prototype.createStatusWindow = function() {
+        var wx = this._numberWindow.width;
+        var wy = this._dummyWindow.y;
+        var ww = Graphics.boxWidth - wx;
+        var wh = this._dummyWindow.height;
+        this._statusWindow = new Window_BuildingStatus(wx, wy, ww, wh);
+        this._statusWindow.hide();
+        this.addWindow(this._statusWindow);
+    };
+    
+    Scene_BuildingShop.prototype.createBuyWindow = function() {
+        var wy = this._dummyWindow.y;
+        var wh = this._dummyWindow.height;
+        this._buyWindow = new Window_BuildingBuy(0, wy, wh);
+        this._buyWindow.setHelpWindow(this._helpWindow);
+        this._buyWindow.setStatusWindow(this._statusWindow);
+        this._buyWindow.hide();
+        this._buyWindow.setHandler('ok',     this.onBuyOk.bind(this));
+        this._buyWindow.setHandler('cancel', this.onBuyCancel.bind(this));
+        this.addWindow(this._buyWindow);
+    };
+    
+    Scene_BuildingShop.prototype.doBuy = function(number) {
+        //need to change the operation here
+        //this._item.buildingId
+        //infinite -> unlock
+        //finite, locked -> unlock, increase by *number*
+        //finite, unlocked -> increase by *number*
+        $gameParty.loseGold(number * this.buyingPrice());
+        if(SimGamePlugin.Params.buildings[this._item.buildingId]["isInfinite"] === "true"){
+            //unlock
+            SimGamePlugin.SimGame.unlockBuilding(this._item.buildingId);
+        }
+        else{
+            if(SimGamePlugin.SimGame.unlocks.includes(this._item.buildingId)){
+                //increase number
+                SimGamePlugin.SimGame.getFiniteBuilding(this._item.buildingId, number);
+            }
+            else{
+                //unlock and increase number
+                SimGamePlugin.SimGame.unlockBuilding(this._item.buildingId);
+                SimGamePlugin.SimGame.getFiniteBuilding(this._item.buildingId, number);
+            }
+        }
+    };
+    
+    Scene_BuildingShop.prototype.maxBuy = function() {
+        //need to modify this
+        //if infinite, can only buy one
+        //if finite, can buy up to maxItems (need checking)
+        if(SimGamePlugin.Params.buildings[this._item.buildingId]["isInfinite"] === "true"){
+            //can only buy one
+            return 1;
+        }
+        else{
+            //can buy up to maxItems
+            var max = 99 - this._item.curAmount;
+            var price = this.buyingPrice();
+            if (price > 0) {
+                return Math.min(max, Math.floor(this.money() / price));
+            } else {
+                return max;
+            }
+        }
+    };
+})();
