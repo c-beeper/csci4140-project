@@ -1,5 +1,5 @@
 /*
-* ======Simulation Game Plugin for RPG MAker MV======
+* ======Simulation Game Plugin for RPG Maker MV======
 * ======CSCI4140 Project======
 */
 
@@ -37,6 +37,7 @@
 *
 * @param buildings
 * @text Building List
+* @desc The list of buildings that could appear in the game.
 * @type struct<Building>[]
 *
 * @help
@@ -47,10 +48,63 @@
 *
 * This plugin allows you to create simulation games using RPG Maker. 
 * 
-* Currently no functions are implemented.
+* You can define the buildings, set the construction area, create events for
+* entering the buiding mode/checking and collecting profits/launching the
+* building shop, and perform other managements.
 * =============================================================================
-*  Basic Usage
+*  Plugin Commands
 * =============================================================================
+*
+* All plugin commands of this plugin begin with SimulationGame.
+*
+* SimulationGame setAsConstructArea [minTier]
+* This will set the current block containing this event to be a construction
+* area. It is recommended to set the "trigger" of the event containing this
+* command as "parallel". [minTier] is an integer, specifying the minimum tier
+* requirement for this area to be enabled.
+* Example: SimulationGame setAsConstructArea 2 will make a block become a
+* construction area when current tier >= 2.
+*
+* SimulationGame enterBuildingMode
+* This will make the game enter the building mode, where the image of character
+* becomes a special cursor, and players can select any area in the construction
+* area to check details, build on it or remove buildings on it. This mode is
+* exitable with the Esc button.
+*
+* SimulationGame checkAndAcquireProfit
+* This will display the total profits that have accumulated after the start of
+* game or last time this have been called. Players can choose to collect the
+* profits.
+*
+* SimulationGame triggerBuildingShop
+* This will open the shop of buildings in the game. Buildings that are set as
+* shoppable under the player's current tier will appear in this shop.
+*
+* SimulationGame unlockBuilding [buildingId]
+* This will have the building with id [buildingId] unlocked. [buildingId] is an
+* integer, it is the number that appear in the building list parameter before
+* the defined building.
+* Example: SimulationGame  unlockBuilding 1 will unlock the first building in
+* the list.
+*
+* SimulationGame addFiniteBuilding [buildingId] [amount]
+* This will increase the player's owning amount of finite building with ID
+* [buildingId] by [amount]. [buildingId] and [amount] are integers.
+* Example: SimulationGame addFiniteBuilding 1 2 will give the player 2 copies
+* of the first building.
+* =============================================================================
+*  Parameters
+* =============================================================================
+* 
+* See the description in the parameters list.
+* =============================================================================
+*  Additional Information
+* =============================================================================
+*
+* If you want more instructions or tutorials, or want to contribute/report bug,
+* visit the plugin's github page.
+*
+* https://github.com/c-beeper/csci4140-project
 */
 
 //------Structure of the Building------
@@ -89,7 +143,7 @@
 * 
 * @param profit
 * @text Building's Profit Every Hour
-* @desc The profit that the building would earn every hour. (in debug mode: every minute/second)
+* @desc The profit that the building would earn every hour (time that have passed in reality).
 * @type number
 * @default 1
 * @min 0
@@ -119,11 +173,6 @@
 * @type number
 * @default 1
 * @min 1
-*
-* @param triggerEvent
-* @text Associated Event
-* @desc Create a common event and select it here if you want to trigger some event when game characters are interacting with this building.
-* @type common_event
 */
 
 //Global variable (namespace) of the plugin
@@ -145,6 +194,28 @@ catch (err) {
     console.error(err);
     //do nothing
 }
+
+//Can change the languages here
+SimGamePlugin.Params.Languages = {
+    s_curprofit: "Current profit per hour: ",
+    s_accuprofit: "Profits accumulated till now: ",
+    s_singleprofit: "Profits per hour: ",
+    s_singleaccu: "Profits accumulated: ",
+    s_remove: ", will be acquired upon removal.",
+    s_locked: "This area is currently locked. It will be unlocked in\ntier ",
+    s_cost: "Building cost: ",
+    s_succbuild: "Successfully constructed. You now have ",
+    s_nomoney: "You don't have enough money to build it.",
+    q_collect: "Would you like to collect them?",
+    q_empty: "This area is empty.\nWhat would you like to do?",
+    q_remove: "What would you like to do?",
+    q_exit: "Do you want to exit the building mode?",
+    c_yes: "Yes",
+    c_no: "No",
+    c_construct: "Construct Buildings",
+    c_cancel: "Cancel",
+    c_remove: "Remove Building"
+};
 
 //Main function of the plugin
 (function(){
@@ -175,7 +246,7 @@ catch (err) {
         //_selectionWindow.start();
         var curDate = new Date();
         curDate = curDate.getTime();
-        $gameMessage.add("profit: " + this.calculateProfitsDebug(this.map[0].lastModified,curDate,100));
+        $gameMessage.add("profit: " + this.calculateProfitsFromDate(this.map[0].lastModified,curDate,100));
     };
 
     SimGame.prototype.addConstructArea = function(minTier,mapId,eventId){
@@ -226,7 +297,7 @@ catch (err) {
 
     SimGame.prototype.enterBuildingMode = function(mapId){
         //enter the building mode
-        this.detailAndChangeMode(mapId);
+        if(this.mode === 0) this.detailAndChangeMode(mapId);
     };
 
     SimGame.prototype.detailAndChangeMode = function(mapId){
@@ -297,7 +368,7 @@ catch (err) {
         var curDate = new Date();
         curDate = curDate.getTime();
         //change this into normal after finished development
-        var curProfit = this.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+        var curProfit = this.calculateProfitsFromDate(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
         $gameParty.gainGold(curProfit);
         //$gameMessage.add("Profits earned: " + curProfit + ", you now have: " + $gameParty.gold());
         area.buildingId = -1;
@@ -307,6 +378,7 @@ catch (err) {
     };
 
     SimGame.prototype.checkAndAcquireProfit = function(){
+        if(this.mode === 1) return;
         //checks the current profits, and acquire them
         var curDate = new Date();
         curDate = curDate.getTime();
@@ -317,13 +389,13 @@ catch (err) {
             if(area.buildingId !== -1){
                 totProfitPerHour += Number(SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
                 //remember to change this from debug to normal
-                totProfit += this.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+                totProfit += this.calculateProfitsFromDate(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
             }
         });
-        $gameMessage.add("Current profit per hour: " + totProfitPerHour);
-        $gameMessage.add("Profits accumulated till now: " + totProfit);
-        $gameMessage.add("Would you like to collect them?");
-        $gameMessage.setChoices(["Yes","No"],0,1);
+        $gameMessage.add(SimGamePlugin.Params.Languages.s_curprofit + totProfitPerHour);
+        $gameMessage.add(SimGamePlugin.Params.Languages.s_accuprofit + totProfit);
+        $gameMessage.add(SimGamePlugin.Params.Languages.q_collect);
+        $gameMessage.setChoices([SimGamePlugin.Params.Languages.c_yes,SimGamePlugin.Params.Languages.c_no],0,1);
         $gameMessage.setChoiceCallback((n) => {
             if(n === 0){
                 //"yes" selected
@@ -335,7 +407,7 @@ catch (err) {
                     //iterate through all the areas to calculate the total profit
                     if(area.buildingId !== -1){
                         //remember to change this from debug to normal
-                        totProfit += this.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+                        totProfit += this.calculateProfitsFromDate(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
                         //reset the last modified time
                         area.lastModified = curDate;
                     }
@@ -365,25 +437,8 @@ catch (err) {
         }
     };
 
-    SimGame.prototype.calculateProfitsDebug = function(date1,date2,profit){
-        //calculate the profit using per minute (don't need to wait to see the result)
-        //past time in seconds
-        var diff = (date2 - date1) / 1000;
-        //past time in minutes
-        diff /= 60;
-        //times the profit
-        diff *= profit;
-        if(diff < 0){
-            //probably the player has changed the system time
-            return 0;
-        }
-        else{
-            //round to integers
-            return Math.round(diff);
-        }
-    };
-
     SimGame.prototype.triggerBuildingShop = function(){
+        if(this.mode === 1) return;
         //invokes the building shop interface
         SceneManager.push(Scene_BuildingShop);
         //change this
@@ -432,8 +487,8 @@ catch (err) {
                     var area = SimGamePlugin.SimGame.map.find(function(area){return area.mapId === $gameMap.mapId() && area.eventId === eventId});
                     if(SimGamePlugin.SimGame.tier >= area.minTier){
                         if(area.buildingId === -1){
-                            $gameMessage.add("This area is empty.\nWhat would you like to do?");
-                            $gameMessage.setChoices(["Construct Buildings","Cancel"],0,1);
+                            $gameMessage.add(SimGamePlugin.Params.Languages.q_empty);
+                            $gameMessage.setChoices([SimGamePlugin.Params.Languages.c_construct,SimGamePlugin.Params.Languages.c_cancel],0,1);
                             $gameMessage.setChoiceCallback((n) => {
                                 if(n === 0){
                                     //"construct buildings" selected
@@ -446,14 +501,14 @@ catch (err) {
                         else{
                             $gameMessage.add(SimGamePlugin.Params.buildings[area.buildingId]["name"]);
                             $gameMessage.add(JSON.parse(SimGamePlugin.Params.buildings[area.buildingId]["description"]));
-                            $gameMessage.add("Profits per hour: " + SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+                            $gameMessage.add(SimGamePlugin.Params.Languages.s_singleprofit + SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
                             var curDate = new Date();
                             curDate = curDate.getTime();
                             //change this into normal after finished development
-                            var curProfit = SimGamePlugin.SimGame.calculateProfitsDebug(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
-                            $gameMessage.add("Profits accumulated: " + curProfit + ", will be acquired upon remmoval.");
-                            $gameMessage.add("What would you like to do?");
-                            $gameMessage.setChoices(["Remove Building","Cancel"],0,1);
+                            var curProfit = SimGamePlugin.SimGame.calculateProfitsFromDate(area.lastModified,curDate,SimGamePlugin.Params.buildings[area.buildingId]["profit"]);
+                            $gameMessage.add(SimGamePlugin.Params.Languages.s_singleaccu + curProfit + SimGamePlugin.Params.Languages.s_remove);
+                            $gameMessage.add(SimGamePlugin.Params.Languages.q_remove);
+                            $gameMessage.setChoices([SimGamePlugin.Params.Languages.c_remove,SimGamePlugin.Params.Languages.c_cancel],0,1);
                             $gameMessage.setChoiceCallback((n) => {
                                 if(n === 0){
                                     //"remove building" selected
@@ -467,14 +522,14 @@ catch (err) {
                         }
                     }
                     else{
-                        $gameMessage.add("This area is currently locked. It will be unlocked in\ntier " + area.minTier);
+                        $gameMessage.add(SimGamePlugin.Params.Languages.s_locked + area.minTier);
                     }
                 }
             }
             else if(event.keyCode === 27){
                 //esc pressed
-                $gameMessage.add("Do you want to exit the building mode?");
-                $gameMessage.setChoices(["Yes","No"],0,1);
+                $gameMessage.add(SimGamePlugin.Params.Languages.q_exit);
+                $gameMessage.setChoices([SimGamePlugin.Params.Languages.c_yes,SimGamePlugin.Params.Languages.c_no],0,1);
                 $gameMessage.setChoiceCallback((n) => {
                     if(n === 0){
                         //"yes" selected
@@ -635,6 +690,7 @@ catch (err) {
 
     Window_SimGameBuildingList.prototype.isEnabled = function(id) {
         //If the building is infinite or contain amount left, return true
+        if(id === undefined)    return false;
         if(SimGamePlugin.Params.buildings[id]["isInfinite"] === "false"){
             var curBuilding = SimGamePlugin.SimGame.numFinite.find((value) => {
                 return value.buildingId === id;
@@ -799,8 +855,8 @@ catch (err) {
         var id = this._selectionWindow.item();
         $gameMessage.add(SimGamePlugin.Params.buildings[id]["name"]);
         $gameMessage.add(JSON.parse(SimGamePlugin.Params.buildings[id]["description"]));
-        $gameMessage.add("Profits per hour: " + SimGamePlugin.Params.buildings[id]["profit"]);
-        $gameMessage.add("Building cost: " + SimGamePlugin.Params.buildings[id]["cost"] + ", you now have " + $gameParty.gold());
+        $gameMessage.add(SimGamePlugin.Params.Languages.s_singleprofit + SimGamePlugin.Params.buildings[id]["profit"]);
+        $gameMessage.add(SimGamePlugin.Params.Languages.s_cost + SimGamePlugin.Params.buildings[id]["cost"]);
         if($gameParty.gold() >= SimGamePlugin.Params.buildings[id]["cost"]){
             //having enough money to build
             $gameParty.loseGold(SimGamePlugin.Params.buildings[id]["cost"]);
@@ -809,29 +865,14 @@ catch (err) {
                 SimGamePlugin.SimGame.consumeFiniteBuilding(id,1);
             }
             SimGamePlugin.SimGame.constructBuilding($gameMap.mapId(),$gameMap.eventIdXy($gamePlayer.x,$gamePlayer.y),id);
-            $gameMessage.add("Successfully constructed.");
-            //try add the choice if time permits...
-            /*$gameMessage.add("Would you like to construct it here?");
-            $gameMessage.setChoices(["Yes","No"],0,1);
-            console.log("after setchoice");
-            $gameMessage.setChoiceCallback((n) => {
-                if(n === 0){
-                    //"yes" selected
-                    $gameParty.loseGold(SimGamePlugin.Params.buildings[id]["cost"]);
-                    SimGamePlugin.SimGame.constructBuilding($gameMap.mapId(),$gameMap.eventIdXy($gamePlayer.x,$gamePlayer.y),id);
-                    //terminate the select window
-                    //this._messageWindow.terminateMessage();
-                    
-                }
-                
-            });*/
+            $gameMessage.add(SimGamePlugin.Params.Languages.s_succbuild + $gameParty.gold());
             SimGamePlugin.SimGame.inOtherScene = false;
             this.popScene();
             
         }
         else{
             //not enough money; nothing happens
-            $gameMessage.add("You don't have enough money to build it.");
+            $gameMessage.add(SimGamePlugin.Params.Languages.s_nomoney);
             SimGamePlugin.SimGame.inOtherScene = false;
             this.popScene();
         }
